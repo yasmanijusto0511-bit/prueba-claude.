@@ -27,6 +27,8 @@
 
 **Filtro de entradas:** por defecto una vela mini no puede ser la referencia del gatillo, para no entrar en cualquier vela. Se puede apagar en "No entrar con una vela mini como referencia".
 
+**Entrada anticipada por tamaño:** además de entrar al superar la vela de color opuesto, entra en cuanto la vela en formación recorre desde su apertura el tamaño de una vela grande (cuerpo ≥ 2.5 veces el promedio de 20 velas y ≥ 1.5 veces el ATR de 14, como en "Los 3 motores"). Se puede apagar. En pruebas con AAPL casi no cambia el resultado.
+
 **Ventana:** solo se opera la **primera hora** del mercado (60 minutos desde la apertura). Se puede cambiar en los parámetros.
 
 **Parámetros configurables:** zona horaria y sesión regular, longitudes de las SMA, minutos finales (45), máximo de entradas y ventana de operación (60).

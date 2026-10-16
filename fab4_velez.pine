@@ -57,6 +57,11 @@ trailOn = input.bool(true, "Luego llevar el stop vela a vela (solo velas de tu c
 miniFactor = input.float(0.5, "Vela mini: rango menor a X veces el rango promedio (10 velas)", minval=0.05, maxval=2.0, step=0.05, group=grpR,
      tooltip="Las velas mini no mueven el stop. Es un valor mío por defecto: ajústalo a lo que tú consideras una vela mini.")
 trailTicks = input.int(0, "Ticks de colchón bajo/sobre la vela", minval=0, group=grpR)
+sizeTrigger = input.bool(true, "Entrar también cuando la vela ya alcanzó tamaño adecuado", group=grpE,
+     tooltip="Además de entrar al superar la vela de color opuesto, entra en cuanto la vela en formación recorre desde su apertura el tamaño de una vela grande (a favor de la ubicación).")
+bigAvgMult = input.float(2.5, "Vela grande: cuerpo ≥ X veces el cuerpo promedio (20 velas)", minval=0.5, step=0.1, group=grpE)
+bigAtrMult = input.float(1.5, "Vela grande: cuerpo ≥ X veces el ATR (14)", minval=0.5, step=0.1, group=grpE,
+     tooltip="Valores de 'Los 3 motores' (2.5 y 1.5). El tamaño adecuado es el mayor de los dos umbrales.")
 miniRefFilter = input.bool(true, "No entrar con una vela mini como referencia", group=grpE,
      tooltip="Una vela mini (ver 'Vela mini' en Salida R1) no puede ser la referencia del gatillo. Evita entradas con riesgo diminuto.")
 
@@ -148,6 +153,9 @@ hasZone  = not na(zTop)
 inWindow = inRth and hasZone and (time_close - sessStart) <= windowMins * 60000
 avgRange = ta.sma(high - low, 10)
 isMiniBar = (high - low) < miniFactor * avgRange
+avgBody20 = ta.sma(math.abs(close - open), 20)
+atr14     = ta.atr(14)
+bigSize   = math.max(bigAvgMult * avgBody20[1], bigAtrMult * atr14[1])   // tamaño de vela grande (de las velas previas)
 
 // ── Ubicación y primera barra ─────────────────────────────────────────────────
 if newSess
@@ -198,14 +206,17 @@ if inManage
     if inWindow
         // 3) Gatillo: la barra rompe el bajo (cortos) o el alto (largos) de la referencia
         if refOk and entries < maxEntries
-            if loc == -1 and low < refL
+            bool sizeOk    = sizeTrigger and not na(bigSize)
+            bool sizeShort = sizeOk and open - low >= bigSize
+            bool sizeLong  = sizeOk and high - open >= bigSize
+            if loc == -1 and (low < refL or sizeShort)
                 entryShort := true
                 stopPx  := refH
-                entryPx := math.min(open, refL)
-            else if loc == 1 and high > refH
+                entryPx := sizeOk ? math.min(open, math.max(refL, open - bigSize)) : math.min(open, refL)
+            else if loc == 1 and (high > refH or sizeLong)
                 entryLong := true
                 stopPx  := refL
-                entryPx := math.max(open, refH)
+                entryPx := sizeOk ? math.max(open, math.min(refH, open + bigSize)) : math.max(open, refH)
             if entryShort or entryLong
                 inTrade := true
                 entries += 1
