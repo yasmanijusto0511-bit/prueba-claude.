@@ -70,6 +70,10 @@ sizeTrigger = input.bool(true, "Entrar también cuando la vela ya alcanzó tama�
 bigAvgMult = input.float(2.5, "Vela grande: cuerpo ≥ X veces el cuerpo promedio (20 velas)", minval=0.5, step=0.1, group=grpE)
 bigAtrMult = input.float(1.5, "Vela grande: cuerpo ≥ X veces el ATR (14)", minval=0.5, step=0.1, group=grpE,
      tooltip="Valores de 'Los 3 motores' (2.5 y 1.5). El tamaño adecuado es el mayor de los dos umbrales.")
+maStop = input.bool(true, "Stop del otro lado de la SMA20/SMA200 si la entrada está cerca de ella", group=grpE,
+     tooltip="Si el precio de entrada está muy cerca de la SMA20 o de la SMA200, el stop va encima de esa media (en cortos) o debajo (en largos), y no en el extremo de la vela de referencia.")
+maNearMult = input.float(1.0, "Cerca de la media: distancia máxima (en velas promedio de 20)", minval=0.1, step=0.1, group=grpE,
+     tooltip="Vale 'cerca' cuando entre la entrada y la media hay como máximo esta cantidad de velas promedio (rango de 20 velas). Como en tus bots: a una vela promedio o menos. Si están cerca las dos medias, el stop va del otro lado de la más lejana.")
 miniRefFilter = input.bool(true, "No entrar con una vela mini como referencia", group=grpE,
      tooltip="Una vela mini (ver 'Vela mini' en Salida R1) no puede ser la referencia del gatillo. Evita entradas con riesgo diminuto.")
 
@@ -167,6 +171,7 @@ if inRth
 hasZone  = not na(zTop)
 inWindow = inRth and hasZone and (time_close - sessStart) <= windowMins * 60000
 avgRange = ta.sma(high - low, 10)
+avg20Range = ta.sma(high - low, 20)   // vela promedio de 20 velas (para "cerca de la media")
 isMiniBar = (high - low) < miniFactor * avgRange
 avgBody20 = ta.sma(math.abs(close - open), 20)
 atr14     = ta.atr(14)
@@ -234,6 +239,24 @@ if inManage
                 stopPx  := refL
                 entryPx := sizeOk ? math.max(open, math.min(refH, open + bigSize)) : math.max(open, refH)
             if entryShort or entryLong
+                // Entrada cerca de la SMA20/SMA200: el stop va del otro lado de la media, no en la vela
+                if maStop and not na(avg20Range)
+                    float nearDist = maNearMult * avg20Range
+                    float cand = na
+                    if loc == -1
+                        if s20 > entryPx and s20 - entryPx <= nearDist
+                            cand := s20
+                        if s200 > entryPx and s200 - entryPx <= nearDist
+                            cand := na(cand) ? s200 : math.max(cand, s200)
+                        if not na(cand)
+                            stopPx := cand + tick
+                    else
+                        if s20 < entryPx and entryPx - s20 <= nearDist
+                            cand := s20
+                        if s200 < entryPx and entryPx - s200 <= nearDist
+                            cand := na(cand) ? s200 : math.min(cand, s200)
+                        if not na(cand)
+                            stopPx := cand - tick
                 inTrade := true
                 entries += 1
                 refOk   := false

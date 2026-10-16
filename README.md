@@ -44,6 +44,8 @@ Nota: en los documentos de los bots, el "Filtro Fab 4 de Velez" figura como prob
 
 **Filtro de entradas:** por defecto una vela mini no puede ser la referencia del gatillo, para no entrar en cualquier vela. Se puede apagar en "No entrar con una vela mini como referencia".
 
+**Stop del otro lado de la media:** si el precio de entrada está muy cerca de la SMA 20 o de la SMA 200 (a una vela promedio de 20 o menos, ajustable), el stop va encima de esa media en cortos o debajo en largos, y no en el extremo de la vela de referencia. Si están cerca las dos, va del otro lado de la más lejana. Se puede apagar en "Stop del otro lado de la SMA20/SMA200…".
+
 **Entrada anticipada por tamaño:** además de entrar al superar la vela de color opuesto, entra en cuanto la vela en formación recorre desde su apertura el tamaño de una vela grande (cuerpo ≥ 2.5 veces el promedio de 20 velas y ≥ 1.5 veces el ATR de 14, como en "Los 3 motores"). Se puede apagar. En pruebas con AAPL casi no cambia el resultado.
 
 **Ventana:** solo se opera la **primera hora** del mercado (60 minutos desde la apertura). Se puede cambiar en los parámetros.
