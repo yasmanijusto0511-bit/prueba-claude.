@@ -1,0 +1,314 @@
+//@version=6
+// Velas de los motores y el Muñeco – señales de entrada, stop inicial y nivel R1
+//
+// Implementa, con los números del documento de traspaso de los bots de Yasmani, estas técnicas:
+//   GRÁFICO DE 5 MIN                          GRÁFICO DE 2 MIN
+//   1A Muñeco A (envolvente en la SMA20)      3  Toro 180 (contra tendencia)
+//   1B Muñeco B (cola de piso en la SMA20)    5  Cola de techo (corto)
+//   2  Rebote 4 velas (contra tendencia)      6  Roja grandota (corto)
+//   4  Toro en la SMA20                       7  Cola de piso lejos (compra)
+//   M3 Vela toro dominante (Motor 3)
+// El indicador activa solo las técnicas que corresponden al marco de tiempo del gráfico.
+//
+// Qué marca: la vela de señal (flecha), el precio de entrada, el stop inicial y el nivel R1
+// (una cabeza: entrada ± riesgo, donde se vende la mitad y el stop pasa a costo).
+// Qué NO incluye: las salidas del bot (2.ª/3.ª verde, seguimiento 2 velas atrás, g50), la agregada,
+// la espera tras vela gigante, la regla de días de gap ni la variante "si antes sale una verde" de
+// las colas. Los umbrales son los del documento; "vela promedio" = promedio del rango (alto-bajo)
+// de las 20 velas anteriores y a50 = lo mismo con 50.
+// Solo para fines educativos. No es asesoría financiera.
+indicator("Velas de los motores y Muñeco", shorttitle="Velas MM", overlay=true, max_labels_count=500)
+
+// ── Entradas ──────────────────────────────────────────────────────────────────
+grpS = "Sesión"
+tz     = input.string("America/New_York", "Zona horaria de la sesión", group=grpS)
+rth    = input.session("0930-1600", "Sesión regular (RTH)", group=grpS)
+qqqSym = input.string("QQQ", "Símbolo del filtro QQQ (Muñeco A y B)", group=grpS)
+
+grpT = "Técnicas"
+tA   = input.bool(true, "1A Muñeco A (5 min)", group=grpT)
+tB   = input.bool(true, "1B Muñeco B – cola de piso (5 min)", group=grpT)
+tR   = input.bool(true, "2 Rebote 4 velas (5 min)", group=grpT)
+tT20 = input.bool(true, "4 Toro en la SMA20 (5 min)", group=grpT)
+tM3  = input.bool(true, "M3 Vela toro dominante (5 min)", group=grpT)
+t180 = input.bool(true, "3 Toro 180 (2 min)", group=grpT)
+tCT  = input.bool(true, "5 Cola de techo, corto (2 min)", group=grpT)
+tRG  = input.bool(true, "6 Roja grandota, corto (2 min)", group=grpT)
+tCP  = input.bool(true, "7 Cola de piso lejos (2 min)", group=grpT)
+
+grpV = "Visual"
+showLabels = input.bool(true, "Etiquetas con entrada, stop y R1", group=grpV)
+showTable  = input.bool(true, "Tabla de la última señal", group=grpV)
+
+// ── Series base ───────────────────────────────────────────────────────────────
+float tick = syminfo.mintick
+rng   = high - low
+body  = math.abs(close - open)
+green = close > open
+red   = close < open
+upW   = high - math.max(open, close)
+loW   = math.min(open, close) - low
+
+prom   = ta.sma(rng, 20)[1]     // vela promedio: rango de las 20 velas anteriores
+a50    = ta.sma(rng, 50)[1]
+rng200 = ta.sma(rng, 200)[1]
+s20    = ta.sma(close, 20)
+s200   = ta.sma(close, 200)
+atr14  = ta.atr(14)
+avgBody20 = ta.sma(body, 20)
+low5   = ta.lowest(low, 5)
+slope5 = s20 - s20[5]
+
+qqqOk = request.security(qqqSym, timeframe.period, close > ta.sma(close, 20), gaps=barmerge.gaps_off, lookahead=barmerge.lookahead_off)
+
+// ── Marco de tiempo y horario ─────────────────────────────────────────────────
+tfMin = timeframe.in_seconds() / 60
+on2   = timeframe.isminutes and tfMin == 2
+on5   = timeframe.isminutes and tfMin == 5
+
+inRth  = timeframe.isintraday and not na(time(timeframe.period, rth, tz))
+newDay = inRth and not inRth[1]
+int mins      = hour(time, tz) * 60 + minute(time, tz) - 570   // minutos desde las 9:30 al abrir la vela
+int slot      = math.floor(mins / tfMin)
+int closeMins = mins + int(tfMin)                              // minutos desde las 9:30 al cerrar la vela
+ready = inRth and not na(prom) and not na(a50) and not na(s200)
+
+// Filtro de velitas (no_chica): el cuerpo de la vela de entrada debe ser ≥ 0.5 × el cuerpo promedio
+// de las velas de ese mismo día anteriores a ella (si no hay velas previas, pasa)
+var float sumBody  = 0.0
+var int   cntToday = 0
+if newDay
+    sumBody  := 0.0
+    cntToday := 0
+bool noChica = cntToday == 0 or body >= 0.5 * (sumBody / cntToday)
+
+// ── Señales ───────────────────────────────────────────────────────────────────
+// 1A Muñeco A: verde que supera la apertura de la roja anterior, sobre la SMA20 y a ≤ 1 vela promedio
+bool sigA = on5 and tA and ready and s20 > s200 and slope5 > 0.5 * prom and qqqOk and slot < 24 and green and red[1] and close > open[1] and close > s20 and close - s20 <= prom and rng >= 0.5 * prom and rng <= 2 * prom and noChica
+
+// 1B Muñeco B: cola de piso en la SMA20; se arma y se compra al superar el máximo de la vela durante la vela siguiente
+bool sigB = on5 and tB and ready and s20 > s200 and slope5 > 0.5 * prom and qqqOk and slot < 23 and loW >= (2.0 / 3.0) * rng and rng >= 0.5 * prom and low <= s20 + 0.5 * prom and close > s20
+
+// 2 Rebote 4 velas: zona de 3 dedos y vela toro verde después de una roja, cerrando bajo la SMA20
+bool sigR = on5 and tR and ready and (s200 - s20) >= 7.5 * a50 and (s20 - close) >= 4 * prom and green and red[1] and rng >= 1.5 * prom and close < s20 and closeMins <= 375 and noChica
+
+// 4 Toro en la SMA20: roja + verde que supera su apertura, la verde cierra sobre la 20 y cerca
+bool sigT20 = on5 and tT20 and ready and s20 > s200 and slope5 > 0.25 * prom and slot >= 1 and slot <= 23 and green and red[1] and close > open[1] and rng >= 0.75 * prom and rng[1] >= 0.75 * prom and rng <= 3 * prom and close > s20 and close - s20 <= prom and noChica
+
+// M3 Vela toro dominante (artifact "Los 3 motores"): verde grande, casi sin mecha arriba, que cierra sobre los máximos de
+// 3 o más rojas de las últimas 8, cerca de la 20 o la 200, con la 20 subiendo o cruzándola con fuerza (1%)
+int redBelow = 0
+for k = 1 to 8
+    if close[k] < open[k] and high[k] < close
+        redBelow += 1
+bool nearMa   = s20 > 0 and (math.abs(close - s20) / s20 <= 0.025 or math.abs(close - s200) / s200 <= 0.025)
+bool maOk     = s20 > s20[10] or (open < s20 and close > s20 and (close - s20) / s20 >= 0.01)
+bool sigM3 = on5 and tM3 and ready and green and body >= 2.5 * avgBody20 and body >= 1.5 * atr14 and (high - close) <= 0.4 * body and redBelow >= 3 and nearMa and maOk
+
+// 3 Toro 180: roja toro seguida de verde toro que cierra sobre la apertura de la roja, todo bajo la SMA20
+bool sig180 = on2 and t180 and ready and (s200 - s20) >= 7.3 * a50 and close < s20 and red[1] and rng[1] >= 1.5 * prom and green and rng >= 1.5 * prom and close > open[1] and closeMins <= 375 and noChica
+
+// 5 Cola de techo (corto): SMA20 sobre la 200, vela de 3× el promedio con pincho arriba ≥ 60% y lejos de la 20
+bool sigCT = on2 and tCT and ready and s20 > s200 and rng >= 3 * prom and upW >= 0.6 * rng and (high - s20) >= 4 * a50 and closeMins < 375
+
+// 7 Cola de piso lejos (compra): espejo de la cola de techo con la SMA20 bajo la 200
+bool sigCP = on2 and tCP and ready and s20 < s200 and rng >= 3 * prom and loW >= 0.6 * rng and (s20 - low) >= 4 * a50 and closeMins < 375
+
+// 6 Roja grandota (corto): roja con cuerpo ≥ 70%, rango ≥ 5× el promedio de 200 velas y lejos de la 20; solo la primera
+var bool rgUsed = false
+if newDay or (not na(a50) and high - s20 <= 2 * a50)
+    rgUsed := false
+bool sigRG = on2 and tRG and ready and not na(rng200) and not rgUsed and s20 > s200 and red and body >= 0.7 * rng and rng >= 5 * rng200 and (high - s20) >= 4 * a50 and closeMins <= 375
+if sigRG
+    rgUsed := true
+
+// ── Órdenes armadas (se compra o vende al romper el nivel de la vela de señal) ──
+var bool  bArmed = false
+var float bLvl   = na
+var float bStop  = na
+var bool  ctArmed = false
+var float ctLow  = na
+var float ctHigh = na
+var bool  cpArmed = false
+var float cpHigh = na
+var float cpLow  = na
+
+if newDay
+    bArmed  := false
+    ctArmed := false
+    cpArmed := false
+
+bool  entryB  = false
+float bEntryPx = na
+float bStopPx  = na
+if bArmed
+    if high > bLvl
+        entryB   := true
+        bEntryPx := math.max(open, bLvl)
+        bStopPx  := bStop
+    bArmed := false          // el Muñeco B vale solo para la vela siguiente
+if sigB
+    bArmed := true
+    bLvl   := high
+    bStop  := low5 - tick
+
+bool  entryCT = false
+float ctEntryPx = na
+float ctStopPx  = na
+if ctArmed
+    if high > ctHigh or closeMins >= 375
+        ctArmed := false     // se cancela si supera el máximo del pincho o a las 3:45
+    else if low < ctLow
+        entryCT   := true
+        ctEntryPx := math.min(open, ctLow)
+        ctStopPx  := ctHigh + tick
+        ctArmed   := false
+if sigCT
+    ctArmed := true
+    ctLow   := low
+    ctHigh  := high
+
+bool  entryCP = false
+float cpEntryPx = na
+float cpStopPx  = na
+if cpArmed
+    if low < cpLow or closeMins >= 375
+        cpArmed := false     // se cancela si cae bajo el mínimo del pincho o a las 3:45
+    else if high > cpHigh
+        entryCP   := true
+        cpEntryPx := math.max(open, cpHigh)
+        cpStopPx  := cpLow - tick
+        cpArmed   := false
+if sigCP
+    cpArmed := true
+    cpHigh  := high
+    cpLow   := low
+
+// ── Etiquetas y última señal ──────────────────────────────────────────────────
+f_mark(string tag, bool isLong, float entryPx, float stopPx) =>
+    float risk = math.abs(entryPx - stopPx)
+    float r1   = isLong ? entryPx + risk : entryPx - risk
+    string t   = tag + "\nentrada " + str.tostring(entryPx, format.mintick) + "\nstop " + str.tostring(stopPx, format.mintick) + "  R1 " + str.tostring(r1, format.mintick)
+    label.new(bar_index, isLong ? low : high, t, style = isLong ? label.style_label_up : label.style_label_down, color = color.new(isLong ? color.green : color.red, 20), textcolor = color.white, size = size.small)
+
+var string lastTag   = "-"
+var bool   lastLong  = true
+var float  lastEntry = na
+var float  lastStop  = na
+
+if sigA
+    if showLabels
+        f_mark("A Muñeco", true, close, low - tick)
+    lastTag := "A Muñeco"
+    lastLong := true
+    lastEntry := close
+    lastStop := low - tick
+if entryB
+    if showLabels
+        f_mark("B Cola de piso", true, bEntryPx, bStopPx)
+    lastTag := "B Cola de piso"
+    lastLong := true
+    lastEntry := bEntryPx
+    lastStop := bStopPx
+if sigR
+    if showLabels
+        f_mark("Rebote 4 velas", true, close, low - tick)
+    lastTag := "Rebote 4 velas"
+    lastLong := true
+    lastEntry := close
+    lastStop := low - tick
+if sig180
+    if showLabels
+        f_mark("Toro 180", true, close, low - tick)
+    lastTag := "Toro 180"
+    lastLong := true
+    lastEntry := close
+    lastStop := low - tick
+if sigT20
+    if showLabels
+        f_mark("Toro SMA20", true, close, low - tick)
+    lastTag := "Toro SMA20"
+    lastLong := true
+    lastEntry := close
+    lastStop := low - tick
+if sigM3
+    if showLabels
+        f_mark("M3 Dominante", true, close, low - tick)
+    lastTag := "M3 Dominante"
+    lastLong := true
+    lastEntry := close
+    lastStop := low - tick
+if entryCP
+    if showLabels
+        f_mark("Cola de piso lejos", true, cpEntryPx, cpStopPx)
+    lastTag := "Cola de piso lejos"
+    lastLong := true
+    lastEntry := cpEntryPx
+    lastStop := cpStopPx
+if entryCT
+    if showLabels
+        f_mark("Cola de techo", false, ctEntryPx, ctStopPx)
+    lastTag := "Cola de techo"
+    lastLong := false
+    lastEntry := ctEntryPx
+    lastStop := ctStopPx
+if sigRG
+    if showLabels
+        f_mark("Roja grandota (aprox. al cierre)", false, close, high + tick)
+    lastTag := "Roja grandota"
+    lastLong := false
+    lastEntry := close
+    lastStop := high + tick
+
+// Actualizar el promedio de cuerpos de hoy al final (después de usarlo en noChica)
+if inRth
+    sumBody  += body
+    cntToday += 1
+
+// ── Dibujo ────────────────────────────────────────────────────────────────────
+plot(inRth ? s20 : na,  "SMA 20",  color=color.new(color.blue, 10),   style=plot.style_linebr)
+plot(inRth ? s200 : na, "SMA 200", color=color.new(color.purple, 10), style=plot.style_linebr)
+
+plotshape(sigA,   "1A Muñeco A",        shape.triangleup,   location.belowbar, color.green, text="A",    textcolor=color.green, size=size.small)
+plotshape(sigB,   "1B señal cola piso", shape.circle,       location.belowbar, color.new(color.green, 40), text="B",    textcolor=color.green, size=size.tiny)
+plotshape(entryB, "1B entrada",         shape.triangleup,   location.belowbar, color.green, text="B▲",   textcolor=color.green, size=size.small)
+plotshape(sigR,   "2 Rebote",           shape.triangleup,   location.belowbar, color.teal,  text="Reb",  textcolor=color.teal,  size=size.small)
+plotshape(sigT20, "4 Toro SMA20",       shape.triangleup,   location.belowbar, color.lime,  text="T20",  textcolor=color.lime,  size=size.small)
+plotshape(sigM3,  "M3 Dominante",       shape.triangleup,   location.belowbar, color.olive, text="M3",   textcolor=color.olive, size=size.small)
+plotshape(sig180, "3 Toro 180",         shape.triangleup,   location.belowbar, color.aqua,  text="180",  textcolor=color.aqua,  size=size.small)
+plotshape(sigCP,  "7 señal cola piso lejos", shape.circle,  location.belowbar, color.new(color.aqua, 40), text="CP", textcolor=color.aqua, size=size.tiny)
+plotshape(entryCP, "7 entrada cola piso lejos", shape.triangleup, location.belowbar, color.aqua, text="CP▲", textcolor=color.aqua, size=size.small)
+plotshape(sigCT,  "5 señal cola techo", shape.circle,       location.abovebar, color.new(color.red, 40), text="CT", textcolor=color.red, size=size.tiny)
+plotshape(entryCT, "5 entrada cola techo", shape.triangledown, location.abovebar, color.red, text="CT▼", textcolor=color.red, size=size.small)
+plotshape(sigRG,  "6 Roja grandota",    shape.triangledown, location.abovebar, color.maroon, text="RG",  textcolor=color.maroon, size=size.small)
+
+// ── Tabla ─────────────────────────────────────────────────────────────────────
+var table info = table.new(position.top_right, 2, 5, border_width=1)
+cellBg = color.new(color.gray, 30)
+if showTable and barstate.islast
+    if not (on2 or on5)
+        table.cell(info, 0, 0, "Usar un gráfico de 2 min (Toro 180, colas) o de 5 min (Muñeco, Rebote, Toro SMA20)", text_color=color.white, bgcolor=color.new(color.orange, 20))
+    else
+        float risk = math.abs(lastEntry - lastStop)
+        float r1   = lastLong ? lastEntry + risk : lastEntry - risk
+        table.cell(info, 0, 0, "Marco",       text_color=color.white, bgcolor=cellBg)
+        table.cell(info, 1, 0, on2 ? "2 min: 3, 5, 6, 7" : "5 min: 1A, 1B, 2, 4, M3", text_color=color.white, bgcolor=cellBg)
+        table.cell(info, 0, 1, "Última señal", text_color=color.white, bgcolor=cellBg)
+        table.cell(info, 1, 1, lastTag,        text_color=color.white, bgcolor=lastLong ? color.new(color.green, 20) : color.new(color.red, 20))
+        table.cell(info, 0, 2, "Entrada",      text_color=color.white, bgcolor=cellBg)
+        table.cell(info, 1, 2, na(lastEntry) ? "-" : str.tostring(lastEntry, format.mintick), text_color=color.white, bgcolor=cellBg)
+        table.cell(info, 0, 3, "Stop",         text_color=color.white, bgcolor=cellBg)
+        table.cell(info, 1, 3, na(lastStop) ? "-" : str.tostring(lastStop, format.mintick), text_color=color.white, bgcolor=cellBg)
+        table.cell(info, 0, 4, "R1 (1 cabeza)", text_color=color.white, bgcolor=cellBg)
+        table.cell(info, 1, 4, na(risk) ? "-" : str.tostring(r1, format.mintick), text_color=color.white, bgcolor=cellBg)
+
+// ── Alertas ───────────────────────────────────────────────────────────────────
+alertcondition(sigA,    "Muñeco A",              "Señal Muñeco A (compra al cierre)")
+alertcondition(entryB,  "Muñeco B entrada",      "Muñeco B: el precio superó el máximo de la cola (compra)")
+alertcondition(sigR,    "Rebote 4 velas",        "Señal Rebote 4 velas (compra al cierre)")
+alertcondition(sigT20,  "Toro en la SMA20",      "Señal Toro en la SMA20 (compra al cierre)")
+alertcondition(sigM3,   "M3 Dominante",          "Señal vela toro dominante (compra al cierre)")
+alertcondition(sig180,  "Toro 180",              "Señal Toro 180 (compra al cierre)")
+alertcondition(entryCP, "Cola de piso lejos",    "Cola de piso lejos: el precio superó el máximo del pincho (compra)")
+alertcondition(entryCT, "Cola de techo",         "Cola de techo: el precio rompió el mínimo del pincho (corto)")
+alertcondition(sigRG,   "Roja grandota",         "Señal Roja grandota (corto)")

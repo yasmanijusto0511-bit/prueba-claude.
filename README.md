@@ -1,6 +1,21 @@
 # prueba-claude.
 
-## Indicador "Los 4 Fantásticos" de Oliver Vélez
+## Indicador "Velas de los motores y Muñeco" (`velas_munecos.pine`)
+
+Segundo indicador de TradingView (Pine Script v6). Marca las señales de entrada de las técnicas de los bots de Yasmani, con los números del documento de traspaso. Activa solo las técnicas del marco de tiempo del gráfico:
+
+| Gráfico | Técnicas |
+|---|---|
+| **5 min** | 1A Muñeco A (envolvente), 1B Muñeco B (cola de piso en la SMA20), 2 Rebote 4 velas, 4 Toro en la SMA20, M3 vela toro dominante |
+| **2 min** | 3 Toro 180, 5 Cola de techo (corto), 6 Roja grandota (corto), 7 Cola de piso lejos |
+
+Para cada señal dibuja la flecha, el precio de entrada, el **stop inicial** y el nivel **R1** (una cabeza: entrada ± riesgo). Incluye tabla de la última señal y alertas.
+
+**No incluye todavía:** las salidas del bot (2.ª y 3.ª verde, seguimiento 2 velas atrás, mitad en vela gigante), la agregada, la espera tras vela gigante, la regla de días de gap ni la variante "si antes sale una verde" de las colas. La Roja grandota se marca al cierre de la vela, no en vivo. No ha sido compilado ni probado en TradingView.
+
+Nota: en los documentos de los bots, el "Filtro Fab 4 de Velez" figura como probado y descartado en las compras del Muñeco.
+
+## Indicador "Los 4 Fantásticos" de Oliver Vélez (`fab4_velez.pine`)
 
 - `fab4_velez.pine`: indicador de **TradingView (Pine Script v6)**.
 - `notas_4_fantasticos_velez.md`: notas de estudio del video de Vélez, con los tiempos de cada regla.
