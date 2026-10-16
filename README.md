@@ -33,6 +33,8 @@ Nota: en los documentos de los bots, el "Filtro Fab 4 de Velez" figura como prob
 - Si aparece una barra verde, pasa a ser la nueva referencia hasta que una barra rompa su bajo.
 - Cada nueva barra de color opuesto con rotura da otra entrada (hasta 5 por defecto).
 
+**Estado estrecho (medias comprimidas):** siguiendo a Vélez, solo se opera el día si la SMA 20 y la SMA 200 estaban relativamente cerca una de la otra al cierre previo. Por defecto el umbral es 3 velas promedio (rango promedio de 50 velas), ajustable en "Los 4 Fantásticos". Si las medias están abiertas, la etiqueta de apertura lo dice y ese día no hay entradas. Vélez no da un número; el 3 es un valor por defecto mío.
+
 **Salida R1** (regla propia del usuario, no es de Vélez):
 - Al ganar 1 cabeza (+1R, lo mismo que arriesgaba de la entrada al stop) marca "R1 ½": se vende la mitad y el stop de la otra mitad pasa al precio de entrada.
 - Después el stop se lleva vela a vela. Solo cuentan las velas de tu color de tendencia que no sean "mini": en largo, el stop sube al bajo de cada vela verde; en corto, baja al alto de cada vela roja. Nunca se afloja.

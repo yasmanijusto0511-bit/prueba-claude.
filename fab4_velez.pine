@@ -8,6 +8,10 @@
 //   4. Máximo y mínimo de los últimos ~45 min de la sesión previa
 // La caja va del elemento más alto al más bajo y se extiende al día de hoy.
 //
+// Estado estrecho (Vélez): las mejores jugadas nacen cuando la SMA20 y la SMA200 están relativamente
+// cerca una de la otra (comprimidas). Si al cierre previo su separación supera el umbral (en velas
+// promedio de 50), ese día no se opera. El umbral es ajustable; Vélez no da un número.
+//
 // Ubicación: la apertura del día respecto a la caja.
 //   Abre por encima -> solo largos. Abre por debajo -> solo cortos. Dentro -> sin ubicación.
 //
@@ -44,6 +48,10 @@ smaFastLen = input.int(20, "SMA rápida", minval=1, group=grpZ)
 smaSlowLen = input.int(200, "SMA lenta", minval=1, group=grpZ)
 lateMins   = input.int(45, "Minutos finales de la sesión previa", minval=5, maxval=120, group=grpZ,
      tooltip="Vélez: 'no quiero una hora, no quiero dos horas, aproximadamente 45 minutos'.")
+narrowFilter = input.bool(true, "Solo operar con las medias comprimidas (estado estrecho)", group=grpZ,
+     tooltip="Vélez: las mejores jugadas nacen cuando la SMA20 y la SMA200 están relativamente cerca una de la otra (estado estrecho). Si al cierre previo están separadas más que el umbral, ese día no se opera.")
+narrowMult = input.float(3.0, "Estrecho: separación SMA20–SMA200 máxima (en velas promedio de 50)", minval=0.1, step=0.5, group=grpZ,
+     tooltip="Vélez no da un número (lo muestra en gráficos). 3 velas promedio es un valor mío por defecto: ajústalo viendo tus gráficos.")
 
 grpE = "Entradas"
 maxEntries = input.int(5, "Máximo de entradas por día", minval=1, maxval=10, group=grpE,
@@ -72,6 +80,7 @@ showTable  = input.bool(true, "Tabla de resumen", group=grpV)
 // ── Estado de sesión ──────────────────────────────────────────────────────────
 s20  = ta.sma(close, smaFastLen)
 s200 = ta.sma(close, smaSlowLen)
+a50now = ta.sma(high - low, 50)   // vela promedio de 50 velas (rango alto-bajo)
 
 inRth   = timeframe.isintraday and not na(time(timeframe.period, rth, tz))
 newSess = inRth and not inRth[1]
@@ -83,6 +92,9 @@ var array<int>   dayTc   = array.new<int>()
 var float lastClose = na
 var float lastS20   = na
 var float lastS200  = na
+var float lastA50   = na
+var float sepRatio  = na   // separación SMA20–SMA200 al cierre previo, en velas promedio de 50
+var bool  narrowOk  = true // medias comprimidas (estado estrecho)
 
 var float zTop     = na
 var float zBot     = na
@@ -128,7 +140,9 @@ if newSess
         lateLo   := lo
         zTop     := math.max(lastS20, lastS200, lastClose, hi)
         zBot     := math.min(lastS20, lastS200, lastClose, lo)
+        sepRatio := lastA50 > 0 ? math.abs(lastS20 - lastS200) / lastA50 : na
     else
+        sepRatio := na
         lvlClose := na
         lvl20    := na
         lvl200   := na
@@ -148,6 +162,7 @@ if inRth
     lastClose := close
     lastS20   := s20
     lastS200  := s200
+    lastA50   := a50now
 
 hasZone  = not na(zTop)
 inWindow = inRth and hasZone and (time_close - sessStart) <= windowMins * 60000
@@ -159,7 +174,8 @@ bigSize   = math.max(bigAvgMult * avgBody20[1], bigAtrMult * atr14[1])   // tama
 
 // ── Ubicación y primera barra ─────────────────────────────────────────────────
 if newSess
-    loc     := hasZone ? (open > zTop ? 1 : open < zBot ? -1 : 0) : 0
+    narrowOk := not narrowFilter or (not na(sepRatio) and sepRatio <= narrowMult)
+    loc     := hasZone and narrowOk ? (open > zTop ? 1 : open < zBot ? -1 : 0) : 0
     bar1Col := close > open ? 1 : close < open ? -1 : 0
     refH    := high
     refL    := low
@@ -257,13 +273,13 @@ plotshape(stopLoss,   "Stop",          shape.xcross,       location.abovebar, co
 plotshape(trailOut,   "Salida (stop móvil)", shape.xcross, location.abovebar, color.green, text="Salida", textcolor=color.green, size=size.tiny)
 
 if showLabels and newSess and hasZone
-    txt = loc == 1 ? "Abre ARRIBA de la caja: solo largos" : loc == -1 ? "Abre ABAJO de la caja: solo cortos" : "Abre DENTRO de la caja: sin ubicación"
+    txt = not narrowOk ? "Medias abiertas (" + str.tostring(sepRatio, "#.0") + " velas): hoy no se opera" : loc == 1 ? "Abre ARRIBA de la caja: solo largos" : loc == -1 ? "Abre ABAJO de la caja: solo cortos" : "Abre DENTRO de la caja: sin ubicación"
     col = loc == 1 ? color.green : loc == -1 ? color.red : color.gray
     label.new(bar_index, loc == -1 ? high : low, txt, style=loc == -1 ? label.style_label_down : label.style_label_up,
          color=color.new(col, 20), textcolor=color.white, size=size.small)
 
 // ── Tabla ─────────────────────────────────────────────────────────────────────
-var table info = table.new(position.top_right, 2, 9, border_width=1)
+var table info = table.new(position.top_right, 2, 10, border_width=1)
 cellBg = color.new(color.gray, 30)
 if showTable and barstate.islast
     if not timeframe.isintraday
@@ -292,6 +308,8 @@ if showTable and barstate.islast
         table.cell(info, 1, 6, stopTxt,        text_color=color.white, bgcolor=cellBg)
         table.cell(info, 0, 7, "R1 (+1R)",     text_color=color.white, bgcolor=cellBg)
         table.cell(info, 1, 7, r1Txt,          text_color=color.white, bgcolor=r1State == 1 ? color.new(color.green, 20) : cellBg)
+        table.cell(info, 0, 9, "SMA20–SMA200", text_color=color.white, bgcolor=cellBg)
+        table.cell(info, 1, 9, na(sepRatio) ? "-" : str.tostring(sepRatio, "#.0") + " velas " + (narrowOk ? "(estrecho)" : "(amplio)"), text_color=color.white, bgcolor=narrowOk ? cellBg : color.new(color.orange, 20))
         table.cell(info, 0, 8, "Marco",        text_color=color.white, bgcolor=cellBg)
         table.cell(info, 1, 8, tfOk ? "2 min OK" : "usar 2 min", text_color=color.white, bgcolor=tfOk ? cellBg : color.new(color.orange, 20))
 
