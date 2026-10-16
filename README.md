@@ -33,6 +33,8 @@ Nota: en los documentos de los bots, el "Filtro Fab 4 de Velez" figura como prob
 - Si aparece una barra verde, pasa a ser la nueva referencia hasta que una barra rompa su bajo.
 - Cada nueva barra de color opuesto con rotura da otra entrada (hasta 5 por defecto).
 
+**Ubicaciones (zonas 1, 2 y 3):** la apertura se clasifica por su distancia a la caja, en velas promedio de 50. Zona 1: justo fuera. Zona 2: un poco más lejos. Zona 3: sobreextendido, desde 4 velas (el valor que usan tus bots). Según el video "La magia de las ubicaciones de trading" y tu documento de traspaso: en zona 1 y 2 se opera a favor (más fuerte en la 1); en zona 3 no se opera a favor, y por defecto el indicador **no opera la zona 3**. También hay una opción "En contra" (corto arriba, largo abajo), experimental. Los límites de zona 1 y 2 (2 velas) son un valor mío por defecto. En pruebas con 4 acciones y 3 meses, dejar de operar la zona 3 pasó de −0.02 a +0.06 R por entrada, una mejora modesta que aún cae dentro del margen de error.
+
 **Estado estrecho (medias comprimidas):** siguiendo a Vélez, solo se opera el día si la SMA 20 y la SMA 200 estaban relativamente cerca una de la otra al cierre previo. Por defecto el umbral es 3 velas promedio (rango promedio de 50 velas), ajustable en "Los 4 Fantásticos". Si las medias están abiertas, la etiqueta de apertura lo dice y ese día no hay entradas. Vélez no da un número; el 3 es un valor por defecto mío.
 
 **Salida R1** (regla propia del usuario, no es de Vélez):

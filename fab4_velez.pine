@@ -12,6 +12,11 @@
 // cerca una de la otra (comprimidas). Si al cierre previo su separación supera el umbral (en velas
 // promedio de 50), ese día no se opera. El umbral es ajustable; Vélez no da un número.
 //
+// Ubicaciones (video "La magia de las ubicaciones de trading"): según la distancia entre la caja y la
+// apertura (en velas promedio de 50) hay zonas 1, 2 y 3. Zona 1 (justo fuera): solo a favor. Zona 2: a favor
+// casi siempre. Zona 3 (sobreextendido, "en Plutón"): no se opera a favor; Vélez piensa en el lado contrario.
+// Por defecto el indicador no opera la zona 3 (opción "En contra" experimental).
+//
 // Ubicación: la apertura del día respecto a la caja.
 //   Abre por encima -> solo largos. Abre por debajo -> solo cortos. Dentro -> sin ubicación.
 //
@@ -50,6 +55,13 @@ lateMins   = input.int(45, "Minutos finales de la sesión previa", minval=5, max
      tooltip="Vélez: 'no quiero una hora, no quiero dos horas, aproximadamente 45 minutos'.")
 narrowFilter = input.bool(true, "Solo operar con las medias comprimidas (estado estrecho)", group=grpZ,
      tooltip="Vélez: las mejores jugadas nacen cuando la SMA20 y la SMA200 están relativamente cerca una de la otra (estado estrecho). Si al cierre previo están separadas más que el umbral, ese día no se opera.")
+grpU = "Ubicaciones (zonas 1, 2 y 3)"
+zone2Start = input.float(2.0, "Zona 2 desde (velas promedio de 50 entre la caja y la apertura)", minval=0.1, step=0.5, group=grpU,
+     tooltip="Zona 1: apertura justo fuera de la caja. Zona 2: un poco más lejos. Vélez no da números; este valor es mío por defecto.")
+zone3Start = input.float(4.0, "Zona 3 desde (velas promedio de 50)", minval=0.5, step=0.5, group=grpU,
+     tooltip="Zona 3: sobreextendido ('en Plutón'). 4 velas promedio es lo que usan tus bots para 'zona 3' (Rebote, cola de piso lejos).")
+zone3Mode = input.string("No operar", "Qué hacer en la zona 3", options=["No operar", "En contra (corto arriba, largo abajo)", "A favor"], group=grpU,
+     tooltip="Vélez: arriba 3, no comprar a favor, ahí se piensa en corto; abajo 3, comprar buscando el regreso. 'En contra' es experimental: usa el mismo gatillo, pero espejo.")
 narrowMult = input.float(3.0, "Estrecho: separación SMA20–SMA200 máxima (en velas promedio de 50)", minval=0.1, step=0.5, group=grpZ,
      tooltip="Vélez no da un número (lo muestra en gráficos). 3 velas promedio es un valor mío por defecto: ajústalo viendo tus gráficos.")
 
@@ -111,7 +123,9 @@ var float lateLo   = na
 var int sessStart = na
 var int barsIn    = 0
 
-var int   loc     = 0     // 1 abre arriba, -1 abre abajo, 0 dentro / sin zona
+var int   loc     = 0     // dirección que se opera: 1 largos, -1 cortos, 0 no se opera
+var int   locSide = 0     // lado de la apertura respecto a la caja: 1 arriba, -1 abajo, 0 dentro / sin zona
+var int   zoneNum = 0     // 1, 2 o 3 según la distancia de la apertura a la caja
 var int   bar1Col = 0     // color de la primera barra: 1 verde, -1 roja, 0 doji
 var float refH    = na    // barra de referencia (alto)
 var float refL    = na    // barra de referencia (bajo)
@@ -180,7 +194,19 @@ bigSize   = math.max(bigAvgMult * avgBody20[1], bigAtrMult * atr14[1])   // tama
 // ── Ubicación y primera barra ─────────────────────────────────────────────────
 if newSess
     narrowOk := not narrowFilter or (not na(sepRatio) and sepRatio <= narrowMult)
-    loc     := hasZone and narrowOk ? (open > zTop ? 1 : open < zBot ? -1 : 0) : 0
+    locSide := hasZone and narrowOk ? (open > zTop ? 1 : open < zBot ? -1 : 0) : 0
+    float zoneDist = na
+    if locSide == 1 and lastA50 > 0
+        zoneDist := (open - zTop) / lastA50
+    else if locSide == -1 and lastA50 > 0
+        zoneDist := (zBot - open) / lastA50
+    zoneNum := locSide == 0 or na(zoneDist) ? 0 : zoneDist >= zone3Start ? 3 : zoneDist >= zone2Start ? 2 : 1
+    loc     := locSide
+    if zoneNum == 3
+        if zone3Mode == "No operar"
+            loc := 0
+        else if zone3Mode == "En contra (corto arriba, largo abajo)"
+            loc := -locSide
     bar1Col := close > open ? 1 : close < open ? -1 : 0
     refH    := high
     refL    := low
@@ -296,9 +322,10 @@ plotshape(stopLoss,   "Stop",          shape.xcross,       location.abovebar, co
 plotshape(trailOut,   "Salida (stop móvil)", shape.xcross, location.abovebar, color.green, text="Salida", textcolor=color.green, size=size.tiny)
 
 if showLabels and newSess and hasZone
-    txt = not narrowOk ? "Medias abiertas (" + str.tostring(sepRatio, "#.0") + " velas): hoy no se opera" : loc == 1 ? "Abre ARRIBA de la caja: solo largos" : loc == -1 ? "Abre ABAJO de la caja: solo cortos" : "Abre DENTRO de la caja: sin ubicación"
+    string zTxt = (locSide == 1 ? "ARRIBA " : "ABAJO ") + str.tostring(zoneNum)
+    txt = not narrowOk ? "Medias abiertas (" + str.tostring(sepRatio, "#.0") + " velas): hoy no se opera" : locSide == 0 ? "Abre DENTRO de la caja: sin ubicación" : zoneNum == 3 and loc == 0 ? "Abre " + zTxt + " (sobreextendido): no se opera" : zoneNum == 3 ? "Abre " + zTxt + " (sobreextendido): " + (loc == 1 ? "largos EN CONTRA" : "cortos EN CONTRA") : "Abre " + zTxt + (loc == 1 ? ": solo largos" : ": solo cortos")
     col = loc == 1 ? color.green : loc == -1 ? color.red : color.gray
-    label.new(bar_index, loc == -1 ? high : low, txt, style=loc == -1 ? label.style_label_down : label.style_label_up,
+    label.new(bar_index, locSide == -1 ? high : low, txt, style=locSide == -1 ? label.style_label_down : label.style_label_up,
          color=color.new(col, 20), textcolor=color.white, size=size.small)
 
 // ── Tabla ─────────────────────────────────────────────────────────────────────
@@ -308,9 +335,9 @@ if showTable and barstate.islast
     if not timeframe.isintraday
         table.cell(info, 0, 0, "Fab4: usar un gráfico intradía (Vélez usa 2 min)", text_color=color.white, bgcolor=color.new(color.gray, 20))
     else
-        locTxt  = not hasZone ? "-" : loc == 1 ? "ARRIBA" : loc == -1 ? "ABAJO" : "DENTRO"
+        locTxt  = not hasZone ? "-" : locSide == 1 ? "ARRIBA " + str.tostring(zoneNum) : locSide == -1 ? "ABAJO " + str.tostring(zoneNum) : "DENTRO"
         locCol  = loc == 1 ? color.green : loc == -1 ? color.red : color.gray
-        confirm = not hasZone or loc == 0 ? "-" : (loc == bar1Col ? "Confirma" : bar1Col == 0 ? "Doji" : "Conflicto")
+        confirm = not hasZone or locSide == 0 ? "-" : (locSide == bar1Col ? "Confirma" : bar1Col == 0 ? "Doji" : "Conflicto")
         trigTxt = na(trigLvl) ? "-" : str.tostring(trigLvl, format.mintick)
         stopTxt = inTrade ? str.tostring(stopPx, format.mintick) : "-"
         r1Txt   = not inTrade ? "-" : r1State == 1 ? "½ vendida" : str.tostring(r1Px, format.mintick)
