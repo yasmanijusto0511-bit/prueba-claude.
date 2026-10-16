@@ -18,13 +18,20 @@
 - Si aparece una barra verde, pasa a ser la nueva referencia hasta que una barra rompa su bajo.
 - Cada nueva barra de color opuesto con rotura da otra entrada (hasta 5 por defecto).
 
+**Salida R1** (regla propia del usuario, no es de Vélez):
+- Al ganar 1 cabeza (+1R, lo mismo que arriesgaba de la entrada al stop) marca "R1 ½": se vende la mitad y el stop de la otra mitad pasa al precio de entrada.
+- Después el stop se lleva vela a vela. Solo cuentan las velas de tu color de tendencia que no sean "mini": en largo, el stop sube al bajo de cada vela verde; en corto, baja al alto de cada vela roja. Nunca se afloja.
+- Sigue hasta que el precio toque el stop móvil, aunque pase la primera hora.
+- "Mini" = rango menor a 0.5 veces el rango promedio de las últimas 10 velas. Es un valor por defecto mío y es ajustable.
+- Solo se sigue la última entrada del día.
+
 **Ventana:** solo se opera la **primera hora** del mercado (60 minutos desde la apertura). Se puede cambiar en los parámetros.
 
 **Parámetros configurables:** zona horaria y sesión regular, longitudes de las SMA, minutos finales (45), máximo de entradas y ventana de operación (60).
 
 **Límites:**
-- El video no define objetivos ni salidas, así que el indicador solo marca ubicación, gatillo y stop.
-- Cada entrada se evalúa por separado y la tabla muestra el stop de la última.
+- El video no define objetivos ni salidas; la salida R1 es la del usuario.
+- El indicador sigue solo la última entrada (stop, R1 y stop móvil).
 - No resuelve el orden dentro de una misma barra.
 - No ha sido compilado ni probado en TradingView.
 - Es solo educativo, no asesoría financiera.

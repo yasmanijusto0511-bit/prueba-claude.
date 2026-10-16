@@ -20,8 +20,17 @@
 //   - Tras cada entrada, una nueva barra de color opuesto da otra entrada (hasta N).
 //   - Tras un stop-out, la siguiente barra de color opuesto da un segundo intento.
 //
+// Salida R1 (regla propia del usuario, no es de Vélez):
+//   - Al ganar 1 cabeza (+1R = lo mismo que arriesgaba, de la entrada al stop) marca "R1 ½":
+//     se vende la mitad y el stop de la otra mitad pasa al precio de entrada.
+//   - Después el stop se lleva vela a vela: solo cuentan las velas de tu color de tendencia
+//     (verdes si vas largo, rojas si vas corto) y que no sean "mini". Largo: stop en el bajo
+//     de cada vela verde; corto: stop en el alto de cada vela roja. Solo se mueve a favor.
+//   - Sigue hasta que el precio toque el stop móvil (aunque pase la primera hora).
+//   - Solo se sigue la ÚLTIMA entrada del día.
+//
 // Fuente: video de Oliver Velez Trading En Español (ver notas_4_fantasticos_velez.md).
-// No define objetivos ni salidas; este indicador solo marca ubicación, gatillo y stop.
+// El video no define objetivos ni salidas; la salida R1 es la del usuario.
 // Solo para fines educativos. No es asesoría financiera.
 indicator("Oliver Vélez – Los 4 Fantásticos", shorttitle="Fab4", overlay=true, max_labels_count=500)
 
@@ -41,6 +50,13 @@ maxEntries = input.int(5, "Máximo de entradas por día", minval=1, maxval=10, g
      tooltip="Vélez: en un día de tendencia hay entre 2 y 5 oportunidades de entrada.")
 windowMins = input.int(60, "Ventana de operación tras la apertura (min)", minval=5, maxval=390, group=grpE,
      tooltip="Solo se operan los primeros 60 minutos (09:30–10:30 hora de Nueva York). Vélez no fija una ventana en el video; 390 = toda la sesión.")
+
+grpR = "Salida R1"
+useR1 = input.bool(true, "Marcar R1: vender la mitad al ganar 1 cabeza (+1R)", group=grpR)
+trailOn = input.bool(true, "Luego llevar el stop vela a vela (solo velas de tu color)", group=grpR)
+miniFactor = input.float(0.5, "Vela mini: rango menor a X veces el rango promedio (10 velas)", minval=0.05, maxval=2.0, step=0.05, group=grpR,
+     tooltip="Las velas mini no mueven el stop. Es un valor mío por defecto: ajústalo a lo que tú consideras una vela mini.")
+trailTicks = input.int(0, "Ticks de colchón bajo/sobre la vela", minval=0, group=grpR)
 
 grpV = "Visual"
 showLabels = input.bool(true, "Etiqueta de apertura", group=grpV)
@@ -80,6 +96,9 @@ var bool  refOk   = false // hay una referencia pendiente de romperse
 var bool  inTrade = false
 var float stopPx  = na
 var int   entries = 0
+var float entryPx = na    // precio de entrada de la última entrada
+var float r1Px    = na    // precio donde se gana 1 cabeza (+1R)
+var int   r1State = 0     // 0 antes de R1, 1 = mitad vendida y stop móvil activo
 
 // ── Al abrir una sesión: construir la caja con los datos de la sesión previa ──
 if newSess
@@ -136,40 +155,68 @@ if newSess
     inTrade := false
     stopPx  := na
     entries := 0
+    entryPx := na
+    r1Px    := na
+    r1State := 0
 
-// ── Juego del color: gatillos y stops ─────────────────────────────────────────
+// ── Juego del color: gatillos, stops y salida R1 ──────────────────────────────
 bool entryLong  = false
 bool entryShort = false
-bool stopOut    = false
+bool stopOut    = false   // el precio tocó el stop (inicial o móvil)
+bool stopLoss   = false   // stop inicial: pérdida de 1R
+bool trailOut   = false   // stop móvil tras R1: salida de la mitad restante
+bool r1Hit      = false   // se ganó 1 cabeza: vender la mitad
 
-if inWindow and loc != 0 and barsIn >= 2
-    // 1) Stop de la última entrada
+avgRange = ta.sma(high - low, 10)
+inManage = inRth and hasZone and loc != 0 and barsIn >= 2
+
+if inManage
+    // 1) Stop de la última entrada (tras R1 es el stop móvil de la mitad restante)
     if inTrade
-        if loc == -1 and high >= stopPx
-            inTrade := false
-            stopOut := true
-        else if loc == 1 and low <= stopPx
-            inTrade := false
-            stopOut := true
-    // 2) Gatillo: la barra rompe el bajo (cortos) o el alto (largos) de la referencia
-    if refOk and entries < maxEntries
-        if loc == -1 and low < refL
-            entryShort := true
-            stopPx := refH
-        else if loc == 1 and high > refH
-            entryLong := true
-            stopPx := refL
-        if entryShort or entryLong
-            inTrade := true
-            entries += 1
-            refOk   := false
-    // 3) Nueva referencia: barra de color opuesto a la ubicación (verde si abre abajo)
-    if not (entryShort or entryLong)
-        isOpp = loc == -1 ? close > open : close < open
-        if isOpp
-            refH  := high
-            refL  := low
-            refOk := true
+        bool hitStop = loc == -1 ? high >= stopPx : low <= stopPx
+        if hitStop
+            stopOut  := true
+            trailOut := r1State == 1
+            stopLoss := r1State == 0
+            inTrade  := false
+            r1State  := 0
+    // 2) R1 y stop móvil vela a vela (desde la barra siguiente a R1)
+    if inTrade
+        if r1State == 0
+            if useR1 and (loc == -1 ? low <= r1Px : high >= r1Px)
+                r1Hit   := true
+                r1State := 1
+                stopPx  := entryPx
+        else if trailOn
+            bool trendColor = loc == 1 ? close > open : close < open
+            bool isMini     = (high - low) < miniFactor * avgRange
+            if trendColor and not isMini
+                stopPx := loc == 1 ? math.max(stopPx, low - trailTicks * syminfo.mintick) : math.min(stopPx, high + trailTicks * syminfo.mintick)
+    // Entradas y referencias solo dentro de la ventana de operación
+    if inWindow
+        // 3) Gatillo: la barra rompe el bajo (cortos) o el alto (largos) de la referencia
+        if refOk and entries < maxEntries
+            if loc == -1 and low < refL
+                entryShort := true
+                stopPx  := refH
+                entryPx := math.min(open, refL)
+            else if loc == 1 and high > refH
+                entryLong := true
+                stopPx  := refL
+                entryPx := math.max(open, refH)
+            if entryShort or entryLong
+                inTrade := true
+                entries += 1
+                refOk   := false
+                r1State := 0
+                r1Px    := loc == -1 ? entryPx - (stopPx - entryPx) : entryPx + (entryPx - stopPx)
+        // 4) Nueva referencia: barra de color opuesto a la ubicación (verde si abre abajo)
+        if not (entryShort or entryLong)
+            isOpp = loc == -1 ? close > open : close < open
+            if isOpp
+                refH  := high
+                refL  := low
+                refOk := true
 
 // ── Dibujo ────────────────────────────────────────────────────────────────────
 showZone = inRth and hasZone
@@ -187,11 +234,14 @@ plot(showZone ? lateLo   : na, "Mín tramo final",    color=color.new(color.teal
 
 trigLvl = inWindow and refOk and loc != 0 and barsIn >= 1 ? (loc == -1 ? refL : refH) : na
 plot(trigLvl, "Gatillo (rompe la referencia)", color=color.new(color.yellow, 0), style=plot.style_linebr, linewidth=1)
-plot(inWindow and inTrade ? stopPx : na, "Stop", color=color.new(color.red, 0), style=plot.style_linebr, linewidth=1)
+plot(inManage and inTrade ? stopPx : na, "Stop / stop móvil", color=r1State == 1 ? color.green : color.red, style=plot.style_linebr, linewidth=1)
+plot(inManage and inTrade and r1State == 0 ? r1Px : na, "R1 (+1R)", color=color.new(color.lime, 0), style=plot.style_linebr, linewidth=1)
 
 plotshape(entryLong,  "Entrada larga", shape.triangleup,   location.belowbar, color.green, text="Largo", textcolor=color.green, size=size.small)
 plotshape(entryShort, "Entrada corta", shape.triangledown, location.abovebar, color.red,   text="Corto", textcolor=color.red,   size=size.small)
-plotshape(stopOut,    "Stop",          shape.xcross,       location.abovebar, color.gray,  text="Stop",  textcolor=color.gray,  size=size.tiny)
+plotshape(r1Hit ? r1Px : na, "R1: vender la mitad", shape.diamond, location.absolute, color.lime, text="R1 ½", textcolor=color.lime, size=size.tiny)
+plotshape(stopLoss,   "Stop",          shape.xcross,       location.abovebar, color.gray,  text="Stop",  textcolor=color.gray,  size=size.tiny)
+plotshape(trailOut,   "Salida (stop móvil)", shape.xcross, location.abovebar, color.green, text="Salida", textcolor=color.green, size=size.tiny)
 
 if showLabels and newSess and hasZone
     txt = loc == 1 ? "Abre ARRIBA de la caja: solo largos" : loc == -1 ? "Abre ABAJO de la caja: solo cortos" : "Abre DENTRO de la caja: sin ubicación"
@@ -200,7 +250,7 @@ if showLabels and newSess and hasZone
          color=color.new(col, 20), textcolor=color.white, size=size.small)
 
 // ── Tabla ─────────────────────────────────────────────────────────────────────
-var table info = table.new(position.top_right, 2, 8, border_width=1)
+var table info = table.new(position.top_right, 2, 9, border_width=1)
 cellBg = color.new(color.gray, 30)
 if showTable and barstate.islast
     if not timeframe.isintraday
@@ -211,6 +261,7 @@ if showTable and barstate.islast
         confirm = not hasZone or loc == 0 ? "-" : (loc == bar1Col ? "Confirma" : bar1Col == 0 ? "Doji" : "Conflicto")
         trigTxt = na(trigLvl) ? "-" : str.tostring(trigLvl, format.mintick)
         stopTxt = inTrade ? str.tostring(stopPx, format.mintick) : "-"
+        r1Txt   = not inTrade ? "-" : r1State == 1 ? "½ vendida" : str.tostring(r1Px, format.mintick)
         tfOk    = timeframe.isminutes and timeframe.multiplier == 2
         table.cell(info, 0, 0, "Techo caja",   text_color=color.white, bgcolor=cellBg)
         table.cell(info, 1, 0, hasZone ? str.tostring(zTop, format.mintick) : "-", text_color=color.white, bgcolor=cellBg)
@@ -224,12 +275,16 @@ if showTable and barstate.islast
         table.cell(info, 1, 4, str.tostring(entries) + " / " + str.tostring(maxEntries), text_color=color.white, bgcolor=cellBg)
         table.cell(info, 0, 5, "Gatillo",      text_color=color.white, bgcolor=cellBg)
         table.cell(info, 1, 5, trigTxt,        text_color=color.white, bgcolor=cellBg)
-        table.cell(info, 0, 6, "Stop",         text_color=color.white, bgcolor=cellBg)
+        table.cell(info, 0, 6, r1State == 1 ? "Stop móvil" : "Stop", text_color=color.white, bgcolor=cellBg)
         table.cell(info, 1, 6, stopTxt,        text_color=color.white, bgcolor=cellBg)
-        table.cell(info, 0, 7, "Marco",        text_color=color.white, bgcolor=cellBg)
-        table.cell(info, 1, 7, tfOk ? "2 min OK" : "usar 2 min", text_color=color.white, bgcolor=tfOk ? cellBg : color.new(color.orange, 20))
+        table.cell(info, 0, 7, "R1 (+1R)",     text_color=color.white, bgcolor=cellBg)
+        table.cell(info, 1, 7, r1Txt,          text_color=color.white, bgcolor=r1State == 1 ? color.new(color.green, 20) : cellBg)
+        table.cell(info, 0, 8, "Marco",        text_color=color.white, bgcolor=cellBg)
+        table.cell(info, 1, 8, tfOk ? "2 min OK" : "usar 2 min", text_color=color.white, bgcolor=tfOk ? cellBg : color.new(color.orange, 20))
 
 // ── Alertas ───────────────────────────────────────────────────────────────────
 alertcondition(entryLong,  "Fab4 – entrada larga",  "Fab4: rompe el alto de la referencia (largo)")
 alertcondition(entryShort, "Fab4 – entrada corta",  "Fab4: rompe el bajo de la referencia (corto)")
-alertcondition(stopOut,    "Fab4 – stop tocado",    "Fab4: el precio tocó el stop de la última entrada")
+alertcondition(stopLoss,   "Fab4 – stop tocado",    "Fab4: el precio tocó el stop de la última entrada")
+alertcondition(r1Hit,      "Fab4 – R1 alcanzado",   "Fab4: ganó 1 cabeza (+1R): vender la mitad y subir el stop a la entrada")
+alertcondition(trailOut,   "Fab4 – salida por stop móvil", "Fab4: el precio tocó el stop móvil; sale la mitad restante")
