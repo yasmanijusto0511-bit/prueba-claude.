@@ -1,22 +1,27 @@
 //@version=6
-// Oliver Vélez – Los 4 Fantásticos (Fab 4)
+// Oliver Vélez – Los 4 Fantásticos (Fab 4) + "juego del color"
 //
-// Zona de soporte/resistencia para la primera hora de la sesión regular, construida
-// con 4 elementos de la sesión anterior:
-//   1. SMA 200 al cierre previo
-//   2. SMA 20 al cierre previo
-//   3. Precio de cierre previo
-//   4. Máximo y mínimo del tramo final de la sesión previa (30–60 min, configurable)
+// Los 4 Fantásticos (ítems 2 a 5 de su lista de "5 cosas que necesitamos"):
+//   1. SMA 20 al cierre previo
+//   2. SMA 200 al cierre previo
+//   3. Cierre del día anterior
+//   4. Máximo y mínimo de los últimos ~45 min de la sesión previa
+// La caja va del elemento más alto al más bajo y se extiende al día de hoy.
 //
-// Lectura:
-//   - Abre por encima de la zona -> sesgo alcista (buscar largos)
-//   - Abre por debajo de la zona -> sesgo bajista (buscar cortos)
-//   - Dentro de la zona          -> zona trampa, no operar
-//   - El sesgo se confirma con N cierres consecutivos fuera de la caja y se
-//     invalida si el precio vuelve a cerrar dentro de ella.
+// Ubicación: la apertura del día respecto a la caja.
+//   Abre por encima -> solo largos. Abre por debajo -> solo cortos. Dentro -> sin ubicación.
 //
-// Pensado para gráficos intradía (ideal 2 min). Fuente: interpretaciones públicas del
-// método; los parámetros exactos (ventana final, confirmación) varían entre autores.
+// Gatillo (gráfico de 2 min). Ejemplo bajista (el alcista es el espejo):
+//   - La barra de referencia es la primera barra del día.
+//   - Entra en corto cuando una barra posterior rompe el BAJO de la referencia.
+//   - Stop: por encima del ALTO de la referencia (se arriesga una barra).
+//   - Si aparece una barra de color opuesto (verde), esa barra pasa a ser la nueva
+//     referencia; se sigue marcando su bajo hasta que una barra lo rompa.
+//   - Tras cada entrada, una nueva barra de color opuesto da otra entrada (hasta N).
+//   - Tras un stop-out, la siguiente barra de color opuesto da un segundo intento.
+//
+// Fuente: video de Oliver Velez Trading En Español (ver notas_4_fantasticos_velez.md).
+// No define objetivos ni salidas; este indicador solo marca ubicación, gatillo y stop.
 // Solo para fines educativos. No es asesoría financiera.
 indicator("Oliver Vélez – Los 4 Fantásticos", shorttitle="Fab4", overlay=true, max_labels_count=500)
 
@@ -25,16 +30,17 @@ grpS = "Sesión"
 tz  = input.string("America/New_York", "Zona horaria de la sesión", group=grpS)
 rth = input.session("0930-1600", "Sesión regular (RTH)", group=grpS)
 
-grpZ = "Zona"
+grpZ = "Los 4 Fantásticos"
 smaFastLen = input.int(20, "SMA rápida", minval=1, group=grpZ)
 smaSlowLen = input.int(200, "SMA lenta", minval=1, group=grpZ)
 lateMins   = input.int(45, "Minutos finales de la sesión previa", minval=5, maxval=120, group=grpZ,
-     tooltip="Las fuentes usan entre 30 y 60 minutos. Con estos minutos se toma el máximo y mínimo del final de la sesión previa.")
-useRange   = input.bool(true, "Incluir máx/mín del tramo final en la caja", group=grpZ)
+     tooltip="Vélez: 'no quiero una hora, no quiero dos horas, aproximadamente 45 minutos'.")
 
-grpB = "Sesgo"
-confirmN   = input.int(2, "Cierres consecutivos fuera de la caja", minval=1, maxval=10, group=grpB)
-windowMins = input.int(60, "Ventana de operación tras la apertura (min)", minval=5, maxval=390, group=grpB)
+grpE = "Entradas"
+maxEntries = input.int(5, "Máximo de entradas por día", minval=1, maxval=10, group=grpE,
+     tooltip="Vélez: en un día de tendencia hay entre 2 y 5 oportunidades de entrada.")
+windowMins = input.int(390, "Ventana de operación tras la apertura (min)", minval=5, maxval=390, group=grpE,
+     tooltip="Vélez no fija una ventana. 390 = toda la sesión regular de EE. UU.")
 
 grpV = "Visual"
 showLabels = input.bool(true, "Etiqueta de apertura", group=grpV)
@@ -65,12 +71,19 @@ var float lateLo   = na
 
 var int sessStart = na
 var int barsIn    = 0
-var int bias      = 0   // 1 largos, -1 cortos, 0 sin sesgo / trampa
 
-// ── Al abrir una sesión: construir la zona con los datos de la sesión previa ──
+var int   loc     = 0     // 1 abre arriba, -1 abre abajo, 0 dentro / sin zona
+var int   bar1Col = 0     // color de la primera barra: 1 verde, -1 roja, 0 doji
+var float refH    = na    // barra de referencia (alto)
+var float refL    = na    // barra de referencia (bajo)
+var bool  refOk   = false // hay una referencia pendiente de romperse
+var bool  inTrade = false
+var float stopPx  = na
+var int   entries = 0
+
+// ── Al abrir una sesión: construir la caja con los datos de la sesión previa ──
 if newSess
     barsIn    := 0
-    bias      := 0
     sessStart := time
     if dayTc.size() > 0 and not na(lastS200)
         cutoff = dayTc.last() - lateMins * 60000
@@ -87,8 +100,8 @@ if newSess
         lvl200   := lastS200
         lateHi   := hi
         lateLo   := lo
-        zTop     := useRange ? math.max(lastS20, lastS200, lastClose, hi) : math.max(lastS20, lastS200, lastClose)
-        zBot     := useRange ? math.min(lastS20, lastS200, lastClose, lo) : math.min(lastS20, lastS200, lastClose)
+        zTop     := math.max(lastS20, lastS200, lastClose, hi)
+        zBot     := math.min(lastS20, lastS200, lastClose, lo)
     else
         lvlClose := na
         lvl20    := na
@@ -110,77 +123,113 @@ if inRth
     lastS20   := s20
     lastS200  := s200
 
-// ── Sesgo ─────────────────────────────────────────────────────────────────────
 hasZone  = not na(zTop)
 inWindow = inRth and hasZone and (time_close - sessStart) <= windowMins * 60000
 
-lowestClose  = ta.lowest(close, confirmN)
-highestClose = ta.highest(close, confirmN)
+// ── Ubicación y primera barra ─────────────────────────────────────────────────
+if newSess
+    loc     := hasZone ? (open > zTop ? 1 : open < zBot ? -1 : 0) : 0
+    bar1Col := close > open ? 1 : close < open ? -1 : 0
+    refH    := high
+    refL    := low
+    refOk   := loc != 0
+    inTrade := false
+    stopPx  := na
+    entries := 0
 
-prevBias = bias
-if inWindow and barsIn >= confirmN
-    if lowestClose > zTop
-        bias := 1
-    else if highestClose < zBot
-        bias := -1
-    else if bias == 1 and close <= zTop
-        bias := 0
-    else if bias == -1 and close >= zBot
-        bias := 0
+// ── Juego del color: gatillos y stops ─────────────────────────────────────────
+bool entryLong  = false
+bool entryShort = false
+bool stopOut    = false
 
-longSig  = bias == 1  and prevBias != 1
-shortSig = bias == -1 and prevBias != -1
-failSig  = bias == 0  and prevBias != 0
+if inWindow and loc != 0 and barsIn >= 2
+    // 1) Stop de la última entrada
+    if inTrade
+        if loc == -1 and high >= stopPx
+            inTrade := false
+            stopOut := true
+        else if loc == 1 and low <= stopPx
+            inTrade := false
+            stopOut := true
+    // 2) Gatillo: la barra rompe el bajo (cortos) o el alto (largos) de la referencia
+    if refOk and entries < maxEntries
+        if loc == -1 and low < refL
+            entryShort := true
+            stopPx := refH
+        else if loc == 1 and high > refH
+            entryLong := true
+            stopPx := refL
+        if entryShort or entryLong
+            inTrade := true
+            entries += 1
+            refOk   := false
+    // 3) Nueva referencia: barra de color opuesto a la ubicación (verde si abre abajo)
+    if not (entryShort or entryLong)
+        isOpp = loc == -1 ? close > open : close < open
+        if isOpp
+            refH  := high
+            refL  := low
+            refOk := true
 
 // ── Dibujo ────────────────────────────────────────────────────────────────────
 showZone = inRth and hasZone
 
-pTop = plot(showZone ? zTop : na, "Zona – techo", color=color.new(color.orange, 20), linewidth=2, style=plot.style_linebr)
-pBot = plot(showZone ? zBot : na, "Zona – piso",  color=color.new(color.orange, 20), linewidth=2, style=plot.style_linebr)
-fillCol = bias == 1 ? color.new(color.green, 85) : bias == -1 ? color.new(color.red, 85) : color.new(color.gray, 80)
-fill(pTop, pBot, color=fillCol, title="Zona")
+pTop = plot(showZone ? zTop : na, "Caja – techo", color=color.new(color.orange, 20), linewidth=2, style=plot.style_linebr)
+pBot = plot(showZone ? zBot : na, "Caja – piso",  color=color.new(color.orange, 20), linewidth=2, style=plot.style_linebr)
+fillCol = loc == 1 ? color.new(color.green, 85) : loc == -1 ? color.new(color.red, 85) : color.new(color.gray, 80)
+fill(pTop, pBot, color=fillCol, title="Caja")
 
-plot(showZone ? lvlClose : na, "Cierre previo", color=color.new(color.gray, 20),   style=plot.style_linebr)
-plot(showZone ? lvl20    : na, "SMA rápida previa", color=color.new(color.blue, 20),   style=plot.style_linebr)
-plot(showZone ? lvl200   : na, "SMA lenta previa",  color=color.new(color.purple, 20), style=plot.style_linebr)
-plot(showZone ? lateHi   : na, "Máx tramo final", color=color.new(color.teal, 40), style=plot.style_linebr)
-plot(showZone ? lateLo   : na, "Mín tramo final", color=color.new(color.teal, 40), style=plot.style_linebr)
+plot(showZone ? lvlClose : na, "Cierre previo",      color=color.new(color.gray, 20),   style=plot.style_linebr)
+plot(showZone ? lvl20    : na, "SMA rápida previa",  color=color.new(color.blue, 20),   style=plot.style_linebr)
+plot(showZone ? lvl200   : na, "SMA lenta previa",   color=color.new(color.purple, 20), style=plot.style_linebr)
+plot(showZone ? lateHi   : na, "Máx tramo final",    color=color.new(color.teal, 40),   style=plot.style_linebr)
+plot(showZone ? lateLo   : na, "Mín tramo final",    color=color.new(color.teal, 40),   style=plot.style_linebr)
 
-plotshape(longSig,  "Sesgo largo",   shape.triangleup,   location.belowbar, color.green, text="Largos", textcolor=color.green, size=size.small)
-plotshape(shortSig, "Sesgo corto",   shape.triangledown, location.abovebar, color.red,   text="Cortos", textcolor=color.red,   size=size.small)
-plotshape(failSig,  "Sesgo fallido", shape.xcross,       location.abovebar, color.gray,  text="Falló",  textcolor=color.gray,  size=size.tiny)
+trigLvl = inWindow and refOk and loc != 0 and barsIn >= 1 ? (loc == -1 ? refL : refH) : na
+plot(trigLvl, "Gatillo (rompe la referencia)", color=color.new(color.yellow, 0), style=plot.style_linebr, linewidth=1)
+plot(inWindow and inTrade ? stopPx : na, "Stop", color=color.new(color.red, 0), style=plot.style_linebr, linewidth=1)
+
+plotshape(entryLong,  "Entrada larga", shape.triangleup,   location.belowbar, color.green, text="Largo", textcolor=color.green, size=size.small)
+plotshape(entryShort, "Entrada corta", shape.triangledown, location.abovebar, color.red,   text="Corto", textcolor=color.red,   size=size.small)
+plotshape(stopOut,    "Stop",          shape.xcross,       location.abovebar, color.gray,  text="Stop",  textcolor=color.gray,  size=size.tiny)
 
 if showLabels and newSess and hasZone
-    openPos = open > zTop ? 1 : open < zBot ? -1 : 0
-    txt = openPos == 1 ? "Abre ARRIBA de la zona" : openPos == -1 ? "Abre ABAJO de la zona" : "Abre DENTRO – zona trampa"
-    col = openPos == 1 ? color.green : openPos == -1 ? color.red : color.gray
-    label.new(bar_index, openPos == -1 ? high : low, txt, style=openPos == -1 ? label.style_label_down : label.style_label_up,
+    txt = loc == 1 ? "Abre ARRIBA de la caja: solo largos" : loc == -1 ? "Abre ABAJO de la caja: solo cortos" : "Abre DENTRO de la caja: sin ubicación"
+    col = loc == 1 ? color.green : loc == -1 ? color.red : color.gray
+    label.new(bar_index, loc == -1 ? high : low, txt, style=loc == -1 ? label.style_label_down : label.style_label_up,
          color=color.new(col, 20), textcolor=color.white, size=size.small)
 
 // ── Tabla ─────────────────────────────────────────────────────────────────────
-var table info = table.new(position.top_right, 2, 7, border_width=1)
+var table info = table.new(position.top_right, 2, 8, border_width=1)
+cellBg = color.new(color.gray, 30)
 if showTable and barstate.islast
     if not timeframe.isintraday
-        table.cell(info, 0, 0, "Fab4: usar un gráfico intradía (ideal 2 min)", text_color=color.white, bgcolor=color.new(color.gray, 20))
+        table.cell(info, 0, 0, "Fab4: usar un gráfico intradía (Vélez usa 2 min)", text_color=color.white, bgcolor=color.new(color.gray, 20))
     else
-        biasTxt = bias == 1 ? "LARGOS" : bias == -1 ? "CORTOS" : hasZone ? "Sin sesgo / trampa" : "-"
-        biasCol = bias == 1 ? color.green : bias == -1 ? color.red : color.gray
-        table.cell(info, 0, 0, "Techo zona",    text_color=color.white, bgcolor=color.new(color.gray, 30))
-        table.cell(info, 1, 0, hasZone ? str.tostring(zTop, format.mintick) : "-", text_color=color.white, bgcolor=color.new(color.gray, 30))
-        table.cell(info, 0, 1, "Piso zona",     text_color=color.white, bgcolor=color.new(color.gray, 30))
-        table.cell(info, 1, 1, hasZone ? str.tostring(zBot, format.mintick) : "-", text_color=color.white, bgcolor=color.new(color.gray, 30))
-        table.cell(info, 0, 2, "Cierre previo", text_color=color.white, bgcolor=color.new(color.gray, 30))
-        table.cell(info, 1, 2, hasZone ? str.tostring(lvlClose, format.mintick) : "-", text_color=color.white, bgcolor=color.new(color.gray, 30))
-        table.cell(info, 0, 3, "SMA " + str.tostring(smaFastLen), text_color=color.white, bgcolor=color.new(color.gray, 30))
-        table.cell(info, 1, 3, hasZone ? str.tostring(lvl20, format.mintick) : "-", text_color=color.white, bgcolor=color.new(color.gray, 30))
-        table.cell(info, 0, 4, "SMA " + str.tostring(smaSlowLen), text_color=color.white, bgcolor=color.new(color.gray, 30))
-        table.cell(info, 1, 4, hasZone ? str.tostring(lvl200, format.mintick) : "-", text_color=color.white, bgcolor=color.new(color.gray, 30))
-        table.cell(info, 0, 5, "Tramo final",   text_color=color.white, bgcolor=color.new(color.gray, 30))
-        table.cell(info, 1, 5, hasZone ? str.tostring(lateLo, format.mintick) + " – " + str.tostring(lateHi, format.mintick) : "-", text_color=color.white, bgcolor=color.new(color.gray, 30))
-        table.cell(info, 0, 6, "Sesgo",         text_color=color.white, bgcolor=color.new(color.gray, 30))
-        table.cell(info, 1, 6, biasTxt,         text_color=color.white, bgcolor=color.new(biasCol, 20))
+        locTxt  = not hasZone ? "-" : loc == 1 ? "ARRIBA" : loc == -1 ? "ABAJO" : "DENTRO"
+        locCol  = loc == 1 ? color.green : loc == -1 ? color.red : color.gray
+        confirm = not hasZone or loc == 0 ? "-" : (loc == bar1Col ? "Confirma" : bar1Col == 0 ? "Doji" : "Conflicto")
+        trigTxt = na(trigLvl) ? "-" : str.tostring(trigLvl, format.mintick)
+        stopTxt = inTrade ? str.tostring(stopPx, format.mintick) : "-"
+        tfOk    = timeframe.isminutes and timeframe.multiplier == 2
+        table.cell(info, 0, 0, "Techo caja",   text_color=color.white, bgcolor=cellBg)
+        table.cell(info, 1, 0, hasZone ? str.tostring(zTop, format.mintick) : "-", text_color=color.white, bgcolor=cellBg)
+        table.cell(info, 0, 1, "Piso caja",    text_color=color.white, bgcolor=cellBg)
+        table.cell(info, 1, 1, hasZone ? str.tostring(zBot, format.mintick) : "-", text_color=color.white, bgcolor=cellBg)
+        table.cell(info, 0, 2, "Ubicación",    text_color=color.white, bgcolor=cellBg)
+        table.cell(info, 1, 2, locTxt,         text_color=color.white, bgcolor=color.new(locCol, 20))
+        table.cell(info, 0, 3, "1ª barra",     text_color=color.white, bgcolor=cellBg)
+        table.cell(info, 1, 3, confirm,        text_color=color.white, bgcolor=cellBg)
+        table.cell(info, 0, 4, "Entradas",     text_color=color.white, bgcolor=cellBg)
+        table.cell(info, 1, 4, str.tostring(entries) + " / " + str.tostring(maxEntries), text_color=color.white, bgcolor=cellBg)
+        table.cell(info, 0, 5, "Gatillo",      text_color=color.white, bgcolor=cellBg)
+        table.cell(info, 1, 5, trigTxt,        text_color=color.white, bgcolor=cellBg)
+        table.cell(info, 0, 6, "Stop",         text_color=color.white, bgcolor=cellBg)
+        table.cell(info, 1, 6, stopTxt,        text_color=color.white, bgcolor=cellBg)
+        table.cell(info, 0, 7, "Marco",        text_color=color.white, bgcolor=cellBg)
+        table.cell(info, 1, 7, tfOk ? "2 min OK" : "usar 2 min", text_color=color.white, bgcolor=tfOk ? cellBg : color.new(color.orange, 20))
 
 // ── Alertas ───────────────────────────────────────────────────────────────────
-alertcondition(longSig,  "Fab4 – sesgo largo confirmado",  "Fab4: precio confirmado por encima de la zona")
-alertcondition(shortSig, "Fab4 – sesgo corto confirmado",  "Fab4: precio confirmado por debajo de la zona")
-alertcondition(failSig,  "Fab4 – sesgo invalidado",        "Fab4: el precio volvió a cerrar dentro de la zona")
+alertcondition(entryLong,  "Fab4 – entrada larga",  "Fab4: rompe el alto de la referencia (largo)")
+alertcondition(entryShort, "Fab4 – entrada corta",  "Fab4: rompe el bajo de la referencia (corto)")
+alertcondition(stopOut,    "Fab4 – stop tocado",    "Fab4: el precio tocó el stop de la última entrada")
