@@ -18,7 +18,9 @@
 - Si aparece una barra verde, pasa a ser la nueva referencia hasta que una barra rompa su bajo.
 - Cada nueva barra de color opuesto con rotura da otra entrada (hasta 5 por defecto).
 
-**Parámetros configurables:** zona horaria y sesión regular, longitudes de las SMA, minutos finales (45), máximo de entradas y ventana de operación.
+**Ventana:** solo se opera la **primera hora** del mercado (60 minutos desde la apertura). Se puede cambiar en los parámetros.
+
+**Parámetros configurables:** zona horaria y sesión regular, longitudes de las SMA, minutos finales (45), máximo de entradas y ventana de operación (60).
 
 **Límites:**
 - El video no define objetivos ni salidas, así que el indicador solo marca ubicación, gatillo y stop.

@@ -39,8 +39,8 @@ lateMins   = input.int(45, "Minutos finales de la sesión previa", minval=5, max
 grpE = "Entradas"
 maxEntries = input.int(5, "Máximo de entradas por día", minval=1, maxval=10, group=grpE,
      tooltip="Vélez: en un día de tendencia hay entre 2 y 5 oportunidades de entrada.")
-windowMins = input.int(390, "Ventana de operación tras la apertura (min)", minval=5, maxval=390, group=grpE,
-     tooltip="Vélez no fija una ventana. 390 = toda la sesión regular de EE. UU.")
+windowMins = input.int(60, "Ventana de operación tras la apertura (min)", minval=5, maxval=390, group=grpE,
+     tooltip="Solo se operan los primeros 60 minutos (09:30–10:30 hora de Nueva York). Vélez no fija una ventana en el video; 390 = toda la sesión.")
 
 grpV = "Visual"
 showLabels = input.bool(true, "Etiqueta de apertura", group=grpV)
