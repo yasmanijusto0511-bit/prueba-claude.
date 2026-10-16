@@ -25,6 +25,8 @@
 - "Mini" = rango menor a 0.5 veces el rango promedio de las últimas 10 velas. Es un valor por defecto mío y es ajustable.
 - Solo se sigue la última entrada del día.
 
+**Filtro de entradas:** por defecto una vela mini no puede ser la referencia del gatillo, para no entrar en cualquier vela. Se puede apagar en "No entrar con una vela mini como referencia".
+
 **Ventana:** solo se opera la **primera hora** del mercado (60 minutos desde la apertura). Se puede cambiar en los parámetros.
 
 **Parámetros configurables:** zona horaria y sesión regular, longitudes de las SMA, minutos finales (45), máximo de entradas y ventana de operación (60).

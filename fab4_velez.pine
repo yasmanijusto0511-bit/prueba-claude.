@@ -57,6 +57,8 @@ trailOn = input.bool(true, "Luego llevar el stop vela a vela (solo velas de tu c
 miniFactor = input.float(0.5, "Vela mini: rango menor a X veces el rango promedio (10 velas)", minval=0.05, maxval=2.0, step=0.05, group=grpR,
      tooltip="Las velas mini no mueven el stop. Es un valor mío por defecto: ajústalo a lo que tú consideras una vela mini.")
 trailTicks = input.int(0, "Ticks de colchón bajo/sobre la vela", minval=0, group=grpR)
+miniRefFilter = input.bool(true, "No entrar con una vela mini como referencia", group=grpE,
+     tooltip="Una vela mini (ver 'Vela mini' en Salida R1) no puede ser la referencia del gatillo. Evita entradas con riesgo diminuto.")
 
 grpV = "Visual"
 showLabels = input.bool(true, "Etiqueta de apertura", group=grpV)
@@ -144,6 +146,8 @@ if inRth
 
 hasZone  = not na(zTop)
 inWindow = inRth and hasZone and (time_close - sessStart) <= windowMins * 60000
+avgRange = ta.sma(high - low, 10)
+isMiniBar = (high - low) < miniFactor * avgRange
 
 // ── Ubicación y primera barra ─────────────────────────────────────────────────
 if newSess
@@ -151,7 +155,7 @@ if newSess
     bar1Col := close > open ? 1 : close < open ? -1 : 0
     refH    := high
     refL    := low
-    refOk   := loc != 0
+    refOk   := loc != 0 and not (miniRefFilter and isMiniBar)
     inTrade := false
     stopPx  := na
     entries := 0
@@ -167,7 +171,6 @@ bool stopLoss   = false   // stop inicial: pérdida de 1R
 bool trailOut   = false   // stop móvil tras R1: salida de la mitad restante
 bool r1Hit      = false   // se ganó 1 cabeza: vender la mitad
 
-avgRange = ta.sma(high - low, 10)
 inManage = inRth and hasZone and loc != 0 and barsIn >= 2
 
 if inManage
@@ -189,8 +192,7 @@ if inManage
                 stopPx  := entryPx
         else if trailOn
             bool trendColor = loc == 1 ? close > open : close < open
-            bool isMini     = (high - low) < miniFactor * avgRange
-            if trendColor and not isMini
+            if trendColor and not isMiniBar
                 stopPx := loc == 1 ? math.max(stopPx, low - trailTicks * syminfo.mintick) : math.min(stopPx, high + trailTicks * syminfo.mintick)
     // Entradas y referencias solo dentro de la ventana de operación
     if inWindow
@@ -213,7 +215,7 @@ if inManage
         // 4) Nueva referencia: barra de color opuesto a la ubicación (verde si abre abajo)
         if not (entryShort or entryLong)
             isOpp = loc == -1 ? close > open : close < open
-            if isOpp
+            if isOpp and not (miniRefFilter and isMiniBar)
                 refH  := high
                 refL  := low
                 refOk := true
